@@ -8,25 +8,37 @@ const chapters = [
     id: 'chapter-2',
     number: '02',
     title: 'Managing Users',
-    file: 'trac_nghiem_chuong_02_managing_users.md',
+    file: 'docs/trac_nghiem_chuong_02_managing_users.md',
   },
   {
     id: 'chapter-3',
     number: '03',
     title: 'Managing Storage Volumes',
-    file: 'chuong_03_trac_nghiem_on_tap.md',
+    file: 'docs/chuong_03_trac_nghiem_on_tap.md',
   },
   {
     id: 'chapter-4',
     number: '04',
     title: 'Connecting to Networks',
-    file: 'chuong_4_trac_nghiem_on_tap.md',
+    file: 'docs/chuong_4_trac_nghiem_on_tap.md',
   },
   {
     id: 'chapter-5',
     number: '05',
     title: 'Managing Software Packages',
-    file: 'Trac_nghiem_Chuong_05_Managing_Software_Packages.md',
+    file: 'docs/Trac_nghiem_Chuong_05_Managing_Software_Packages.md',
+  },
+  {
+    id: 'chapter-6',
+    number: '06',
+    title: 'Controlling and Monitoring Processes',
+    file: 'docs/chuong_06_trac_nghiem_on_tap.md',
+  },
+  {
+    id: 'chapter-7',
+    number: '07',
+    title: 'Setting Up Network Services',
+    file: 'docs/Trac_nghiem_Chuong_7_Network_Services.md',
   },
 ];
 
