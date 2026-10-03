@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f5f1" />
+    <meta name="description" content="Website luyện câu hỏi trắc nghiệm QTM theo từng chương." />
+    <title>Ôn tập QTM</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Ôn tập QTM, về danh sách chương">
+        <span class="brand-mark" aria-hidden="true">Q</span>
+        <span class="brand-name">QTM <span>ÔN TẬP</span></span>
+      </a>
+      <span class="header-note"><span class="status-dot" aria-hidden="true"></span> Bài luyện cá nhân</span>
+    </header>
+
+    <main id="app-view" class="app-shell" tabindex="-1" aria-live="polite">
+      <section class="loading-state" aria-label="Đang tải câu hỏi">
+        <span class="loading-mark" aria-hidden="true">Q</span>
+        <p>Đang đọc bộ câu hỏi…</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Ôn tập theo tài liệu của bạn</span>
+      <span class="footer-separator" aria-hidden="true">·</span>
+      <span>Tiến độ lưu trên trình duyệt này</span>
+    </footer>
+
+    <noscript>
+      <p class="noscript-message">Website cần bật JavaScript để tải và chấm câu hỏi.</p>
+    </noscript>
+  </body>
+</html>
