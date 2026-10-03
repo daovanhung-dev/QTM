@@ -165,7 +165,7 @@ h1, h2, h3 { font-family: var(--font-display); }
 
 .chapter-card {
   position: relative;
-  min-height: 187px;
+  min-height: 270px;
   padding: 23px 24px 20px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -203,7 +203,22 @@ h1, h2, h3 { font-family: var(--font-display); }
 .unavailable-card { border-color: #e7c7c4; background: #fffafa; }
 .unavailable-filename { overflow-wrap: anywhere; }
 
-.chapter-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
+.chapter-mode-picker {
+  display: grid;
+  gap: 7px;
+  margin: 13px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-muted);
+}
+
+.chapter-mode-picker legend { padding: 0 4px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.chapter-mode-picker label { display: flex; align-items: center; gap: 8px; color: #35433d; font-size: 11px; cursor: pointer; }
+.chapter-mode-picker input { width: 15px; height: 15px; flex: 0 0 15px; margin: 0; accent-color: var(--green); }
+.chapter-mode-description { min-height: 17px; color: var(--muted); font-size: 10px; }
+
+.chapter-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; }
 .saved-state { min-height: 20px; color: var(--muted); font-size: 11px; }
 .saved-state.has-progress { color: var(--green); font-weight: 600; }
 .saved-state.is-complete { color: #765520; }
@@ -274,6 +289,7 @@ h1, h2, h3 { font-family: var(--font-display); }
 .progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .progress-meta strong { font-size: 13px; }
 .progress-meta span { color: var(--muted); font-size: 12px; }
+.elapsed-time { color: var(--green); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
 .progress-track { height: 6px; overflow: hidden; border-radius: 99px; background: #e7ece8; }
 .progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #267557, #76a682); transition: width .2s ease; }
 
@@ -314,6 +330,7 @@ h1, h2, h3 { font-family: var(--font-display); }
 
 .answer-choice { position: relative; display: block; cursor: pointer; }
 .answer-choice input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.answer-choice.is-locked { cursor: default; }
 .choice-content {
   min-height: 44px;
   display: flex;
@@ -346,6 +363,20 @@ h1, h2, h3 { font-family: var(--font-display); }
 .answer-choice:hover .choice-content { border-color: #b9cfc0; background: #fbfdfb; }
 .answer-choice input:checked + .choice-content { border-color: #5d9a7b; background: #eff7f1; box-shadow: inset 0 0 0 1px #5d9a7b; }
 .answer-choice input:checked + .choice-content .choice-letter { color: white; background: var(--green); }
+.answer-choice.is-locked:hover .choice-content:not(.is-answer):not(.is-selected-wrong) { border-color: #e5eae6; background: #fff; }
+.answer-choice.is-locked input:checked + .choice-content { border-color: #5d9a7b; background: #eff7f1; }
+.answer-choice.is-locked input:checked + .choice-content.is-selected-wrong { border-color: #ebd0cd; background: #fcf2f0; box-shadow: inset 0 0 0 1px #ebd0cd; }
+.answer-choice.is-locked input:checked + .choice-content.is-selected-wrong .choice-letter { color: #fff; background: #a34c45; }
+.choice-content.is-answer { border-color: #cbe0d0; color: #245d40; background: #f0f7f1; }
+.choice-content.is-answer .choice-letter { color: #fff; background: #397652; }
+.choice-content.is-selected-wrong { border-color: #ebd0cd; color: #873b36; background: #fcf2f0; }
+.choice-answer-tag { margin-left: auto; padding-left: 8px; color: #587963; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.choice-content.is-selected-wrong .choice-answer-tag { color: #9b4b44; }
+.question-action { display: flex; justify-content: flex-end; margin-top: 13px; }
+.question-action .button { min-height: 39px; }
+.question-feedback { margin: 12px 0 0; padding: 9px 11px; border-radius: 9px; font-size: 12px; font-weight: 600; }
+.question-feedback.is-correct { color: #256143; background: var(--green-pale); }
+.question-feedback.is-wrong { color: #873b36; background: var(--red-pale); }
 
 .quiz-navigation {
   display: flex;
@@ -387,6 +418,7 @@ h1, h2, h3 { font-family: var(--font-display); }
 
 .result-summary h1 { margin: 0; font-size: clamp(23px, 3vw, 30px); line-height: 1.25; letter-spacing: -.04em; }
 .result-summary p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+.result-summary .result-duration { font-size: 11px; font-variant-numeric: tabular-nums; }
 .score-block { min-width: 112px; padding-left: 23px; border-left: 1px solid #d4e1d7; text-align: center; }
 .score-number { display: block; color: var(--green-dark); font-family: var(--font-display); font-size: 28px; font-weight: 800; line-height: 1.15; }
 .score-caption { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
@@ -441,18 +473,21 @@ h1, h2, h3 { font-family: var(--font-display); }
   .page-heading h1 { font-size: 32px; }
   .page-heading .intro { font-size: 14px; }
   .chapter-grid { grid-template-columns: 1fr; gap: 11px; }
-  .chapter-card { min-height: 173px; padding: 19px 19px 17px; border-radius: 18px; }
+  .chapter-card { min-height: 0; padding: 19px 19px 17px; border-radius: 18px; }
   .chapter-card h2 { margin-top: 12px; font-size: 18px; }
   .quiz-topline { align-items: flex-start; margin-bottom: 21px; }
   .quiz-topline .button { min-height: 39px; padding: 0 10px; font-size: 11px; }
   .quiz-heading h1 { font-size: 22px; }
   .progress-panel { padding: 14px; }
-  .progress-meta { align-items: flex-start; }
+  .progress-meta { align-items: flex-start; flex-wrap: wrap; }
   .progress-meta strong { font-size: 12px; }
-  .progress-meta span { max-width: 125px; font-size: 10px; text-align: right; }
+  .progress-meta strong { order: 1; flex: 1 1 auto; }
+  .progress-meta #quiz-mode-hint { order: 3; flex: 1 0 100%; max-width: none; font-size: 10px; text-align: left; }
+  .progress-meta .elapsed-time { order: 2; margin-left: auto; font-size: 11px; }
   .question-card { padding: 17px 15px 18px; border-radius: 13px; }
   .question-prompt { font-size: 14px; }
   .choice-content { gap: 9px; padding: 10px; font-size: 12px; }
+  .choice-answer-tag { max-width: 98px; font-size: 9px; white-space: normal; }
   .quiz-navigation { gap: 6px; padding: 8px; border-radius: 13px; }
   .quiz-navigation .button { min-width: 0; min-height: 42px; padding: 0 12px; font-size: 12px; }
   .navigation-center { font-size: 10px; white-space: nowrap; }
