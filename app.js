@@ -23,6 +23,7 @@ let activeProgress = null;
 let view = 'home';
 let storageAvailable = true;
 let elapsedTimerInterval = null;
+let quizBuilderNextQuestionId = 2;
 
 boot();
 
@@ -162,11 +163,12 @@ function parseQuestions(source, chapter) {
 
     if (!current) continue;
 
+    const quotedPromptLine = line.match(/^>\s?(.*)$/);
     const option = parseOption(line);
     if (option) {
       current.options.push(option);
     } else if (current.options.length === 0) {
-      current.promptLines.push(line);
+      current.promptLines.push(quotedPromptLine ? quotedPromptLine[1] : line);
     }
   }
 
@@ -177,7 +179,7 @@ function parseQuestions(source, chapter) {
 function parseOption(line) {
   const candidate = line.trim().replace(/^[-*+]\s+/, '');
   const isCorrect = candidate.includes('**');
-  const unwrapped = candidate.replaceAll('**', '').trim();
+  const unwrapped = candidate.replaceAll('**', '').replace(/\\([\\*])/g, '$1').trim();
   const match = unwrapped.match(/^([A-D])[.)]\s+(.+)$/);
   if (!match) return null;
 
@@ -506,6 +508,7 @@ function renderHome() {
       <h1>Luyện tập theo chương</h1>
       <p class="intro">Chọn chương để làm từng câu. Dùng phím mũi tên để chọn đáp án và chuyển câu; nhấn Enter để chốt và xem kết quả ngay.</p>
       <div class="home-export-actions">
+        <button class="button secondary" type="button" data-open-quiz-builder>Tạo đề</button>
         <label class="button quick-file-label" for="quick-quiz-file">
           <span>Nhập bài tập .md</span>
           <input id="quick-quiz-file" class="quick-file-input" type="file" accept=".md,.markdown,text/markdown" aria-label="Chọn file Markdown để tạo bài tập nhanh" />
@@ -516,6 +519,7 @@ function renderHome() {
       <p class="quick-file-help">Chọn file .md hoặc .markdown có câu hỏi, bốn lựa chọn A–D và một đáp án đúng in đậm. File được đọc trên trình duyệt.</p>
       <p class="quick-file-status" data-quick-file-status role="status" aria-live="polite"></p>
     </section>
+    ${renderQuizBuilderDialog()}
     ${renderAllChaptersCard(allChaptersData, errors)}
     <section class="chapter-grid" aria-label="Danh sách chương">
       ${chapters.map((chapter) => renderChapterCard(chapter, loadedChapters.get(chapter.id))).join('')}
@@ -528,6 +532,14 @@ function renderHome() {
     button.addEventListener('click', () => startChapter(button.dataset.startChapter));
   });
   appView.querySelector('#quick-quiz-file')?.addEventListener('change', handleQuickQuizFileSelection);
+  const quizBuilder = appView.querySelector('#quiz-builder-dialog');
+  appView.querySelector('[data-open-quiz-builder]')?.addEventListener('click', () => quizBuilder?.showModal());
+  quizBuilder?.querySelector('[data-close-quiz-builder]')?.addEventListener('click', () => quizBuilder.close());
+  quizBuilder?.querySelector('[data-add-builder-question]')?.addEventListener('click', addQuizBuilderQuestion);
+  quizBuilder?.addEventListener('click', handleQuizBuilderClick);
+  quizBuilder?.addEventListener('input', (event) => event.target.setCustomValidity?.(''));
+  quizBuilder?.querySelector('[data-create-built-quiz]')?.addEventListener('click', createQuizFromBuilder);
+  quizBuilder?.querySelector('[data-download-built-quiz]')?.addEventListener('click', downloadQuizFromBuilder);
   appView.querySelector('[data-export-results]')?.addEventListener('click', exportResultsMarkdown);
   appView.querySelector('[data-start-all-chapters]')?.addEventListener('click', startAllChapters);
   appView.querySelectorAll('[data-mode-chapter]').forEach((input) => {
@@ -537,6 +549,167 @@ function renderHome() {
     input.addEventListener('change', () => updateAllChaptersMode(input.value));
   });
   focusViewHeading();
+}
+
+function renderQuizBuilderDialog() {
+  quizBuilderNextQuestionId = 2;
+  return `
+    <dialog id="quiz-builder-dialog" class="quiz-builder-dialog" aria-labelledby="quiz-builder-title">
+      <div class="quiz-builder-heading">
+        <div>
+          <p class="eyebrow">Tạo bài nhanh</p>
+          <h2 id="quiz-builder-title">Tạo đề trắc nghiệm</h2>
+          <p>Nhập câu hỏi, bốn lựa chọn và đánh dấu đáp án đúng. Có thể tải đề thành Markdown để dùng lại.</p>
+        </div>
+        <button class="icon-button" type="button" data-close-quiz-builder aria-label="Đóng form tạo đề">×</button>
+      </div>
+      <form class="quiz-builder-form" data-quiz-builder-form>
+        <label class="builder-title-field">Tên đề
+          <input name="quiz-title" type="text" maxlength="100" required autocomplete="off" placeholder="Ví dụ: Ôn tập chương 1" />
+        </label>
+        <div class="builder-question-list" data-builder-question-list>
+          ${renderQuizBuilderQuestion(1, 1)}
+        </div>
+        <button class="button secondary builder-add-question" type="button" data-add-builder-question>+ Thêm câu hỏi</button>
+        <p class="builder-status" data-builder-status role="status" aria-live="polite"></p>
+        <div class="builder-actions">
+          <button class="button secondary" type="button" data-download-built-quiz>Tải đề Markdown</button>
+          <button class="button" type="button" data-create-built-quiz>Tạo bài kiểm tra</button>
+        </div>
+      </form>
+    </dialog>
+  `;
+}
+
+function renderQuizBuilderQuestion(number, id) {
+  const letters = ['A', 'B', 'C', 'D'];
+  return `
+    <fieldset class="builder-question" data-builder-question data-builder-id="${id}">
+      <legend><span data-builder-order>Câu ${number}</span></legend>
+      <button class="builder-remove-question" type="button" data-remove-builder-question aria-label="Xóa câu ${number}" ${number === 1 ? 'hidden disabled' : ''}>Xóa câu</button>
+      <label class="builder-prompt-field">Nội dung câu hỏi
+        <textarea data-builder-prompt rows="3" required placeholder="Nhập nội dung câu hỏi"></textarea>
+      </label>
+      <fieldset class="builder-correct-picker">
+        <legend>Chọn đáp án đúng</legend>
+        ${letters.map((letter) => `
+          <div class="builder-option-row">
+            <label class="builder-correct-choice"><input type="radio" name="correct-${id}" value="${letter}" required /><span>${letter}</span></label>
+            <label class="builder-option-field"><span>Đáp án ${letter}</span><input data-builder-option="${letter}" type="text" required autocomplete="off" /></label>
+          </div>
+        `).join('')}
+      </fieldset>
+    </fieldset>
+  `;
+}
+
+function addQuizBuilderQuestion() {
+  const list = appView.querySelector('[data-builder-question-list]');
+  if (!list) return;
+  const id = quizBuilderNextQuestionId++;
+  const number = list.querySelectorAll('[data-builder-question]').length + 1;
+  list.insertAdjacentHTML('beforeend', renderQuizBuilderQuestion(number, id));
+  refreshQuizBuilderQuestionNumbers();
+  list.querySelector(`[data-builder-id="${id}"] [data-builder-prompt]`)?.focus();
+}
+
+function handleQuizBuilderClick(event) {
+  const removeButton = event.target.closest('[data-remove-builder-question]');
+  if (!removeButton || removeButton.disabled) return;
+  const list = appView.querySelector('[data-builder-question-list]');
+  const cards = [...(list?.querySelectorAll('[data-builder-question]') ?? [])];
+  const removedIndex = cards.indexOf(removeButton.closest('[data-builder-question]'));
+  cards[removedIndex]?.remove();
+  refreshQuizBuilderQuestionNumbers();
+  const remainingCards = [...(list?.querySelectorAll('[data-builder-question]') ?? [])];
+  remainingCards[Math.min(removedIndex, remainingCards.length - 1)]?.querySelector('[data-builder-prompt]')?.focus();
+}
+
+function refreshQuizBuilderQuestionNumbers() {
+  const cards = [...appView.querySelectorAll('[data-builder-question]')];
+  cards.forEach((card, index) => {
+    const number = index + 1;
+    card.querySelector('[data-builder-order]').textContent = `Câu ${number}`;
+    const removeButton = card.querySelector('[data-remove-builder-question]');
+    removeButton.setAttribute('aria-label', `Xóa câu ${number}`);
+    removeButton.disabled = cards.length === 1;
+    removeButton.hidden = cards.length === 1;
+  });
+}
+
+function readQuizBuilderData() {
+  const dialog = appView.querySelector('#quiz-builder-dialog');
+  const form = dialog?.querySelector('[data-quiz-builder-form]');
+  const titleField = form?.elements.namedItem('quiz-title');
+  if (!dialog || !form || !titleField) return null;
+
+  titleField.setCustomValidity(titleField.value.trim() ? '' : 'Hãy nhập tên đề.');
+  for (const card of form.querySelectorAll('[data-builder-question]')) {
+    const prompt = card.querySelector('[data-builder-prompt]');
+    prompt.setCustomValidity(prompt.value.trim() ? '' : 'Hãy nhập nội dung câu hỏi.');
+    for (const option of card.querySelectorAll('[data-builder-option]')) {
+      option.setCustomValidity(option.value.trim() ? '' : 'Hãy nhập đủ bốn lựa chọn.');
+    }
+  }
+  if (!form.reportValidity()) return null;
+
+  const title = titleField.value.trim();
+  const rows = [...form.querySelectorAll('[data-builder-question]')].map((card) => ({
+    prompt: card.querySelector('[data-builder-prompt]').value.trim(),
+    correct: card.querySelector('input[type="radio"]:checked')?.value,
+    options: ['A', 'B', 'C', 'D'].map((letter) => ({
+      letter,
+      text: card.querySelector(`[data-builder-option="${letter}"]`).value.trim(),
+    })),
+  }));
+  const markdown = serializeQuizBuilderMarkdown(rows);
+  const fileName = `${title.replace(/[\\/:*?"<>|]/g, '-').trim() || 'de-trac-nghiem'}.md`;
+  const chapter = { id: 'quick-exercise', number: '', title, file: fileName };
+  const questions = parseQuestions(markdown, chapter);
+  if (questions.length !== rows.length) {
+    dialog.querySelector('[data-builder-status]').textContent = 'Không thể tạo đề từ nội dung này. Hãy kiểm tra lại các câu hỏi và đáp án.';
+    return null;
+  }
+
+  return { chapter, questions, sourceHash: hashText(markdown), fileName, isQuick: true, markdown };
+}
+
+function serializeQuizBuilderMarkdown(rows) {
+  return rows.map((row, index) => {
+    const prompt = row.prompt.split(/\r?\n/).map((line) => `> ${line}`).join('\n');
+    const options = row.options.map(({ letter, text }) => {
+      const safeText = text.replaceAll('\\', '\\\\').replaceAll('*', '\\*');
+      return `- ${letter}. ${row.correct === letter ? `**${safeText}**` : safeText}`;
+    });
+    return [`### Câu ${index + 1}`, prompt, ...options].join('\n');
+  }).join('\n\n');
+}
+
+function createQuizFromBuilder() {
+  const data = readQuizBuilderData();
+  if (!data) return;
+  loadedQuickQuizzes.set(data.sourceHash, data);
+  appView.querySelector('#quiz-builder-dialog')?.close();
+  startQuiz(data);
+}
+
+function downloadQuizFromBuilder() {
+  const data = readQuizBuilderData();
+  if (!data) return;
+  try {
+    const file = new Blob([data.markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = data.fileName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    appView.querySelector('[data-builder-status]').textContent = `Đã tải ${data.fileName}.`;
+  } catch {
+    appView.querySelector('[data-builder-status]').textContent = 'Không thể tạo file Markdown trên trình duyệt này.';
+  }
 }
 
 async function handleQuickQuizFileSelection(event) {
@@ -1319,6 +1492,11 @@ function renderResults() {
       <div class="score-block"><span class="score-number">${score.correct}/${data.questions.length}</span><span class="score-caption">${percent}% câu đúng</span></div>
     </section>
 
+    <div class="current-result-export">
+      <button class="button" id="export-current-result" type="button">Xuất kết quả bài này · Markdown <span aria-hidden="true">↓</span></button>
+      <span class="export-status" data-current-result-export-status role="status" aria-live="polite"></span>
+    </div>
+
     ${chapterBreakdown}
 
     <div class="result-actions">
@@ -1346,6 +1524,7 @@ function renderResults() {
   `;
 
   appView.querySelector('#back-to-chapters').addEventListener('click', renderHome);
+  appView.querySelector('#export-current-result').addEventListener('click', exportCurrentResultMarkdown);
   appView.querySelector('#retry-wrong-questions')?.addEventListener('click', startWrongQuestionRetry);
   appView.querySelector('#retake-quiz').addEventListener('click', retakeQuiz);
   appView.querySelector('#review-filter').addEventListener('change', (event) => {
@@ -1357,6 +1536,42 @@ function renderResults() {
   appView.querySelector('#previous-review-page').addEventListener('click', () => moveReviewPage(-1));
   appView.querySelector('#next-review-page').addEventListener('click', () => moveReviewPage(1));
   focusViewHeading();
+}
+
+function exportCurrentResultMarkdown() {
+  const status = appView.querySelector('[data-current-result-export-status]');
+  if (!activeQuizData || !activeProgress?.submitted) {
+    if (status) status.textContent = 'Chỉ có thể xuất sau khi nộp bài.';
+    return;
+  }
+
+  const generatedAt = new Date();
+  const date = [generatedAt.getFullYear(), String(generatedAt.getMonth() + 1).padStart(2, '0'), String(generatedAt.getDate()).padStart(2, '0')].join('-');
+  const time = [generatedAt.getHours(), generatedAt.getMinutes(), generatedAt.getSeconds()].map((value) => String(value).padStart(2, '0')).join('');
+  const result = makeExportResult(activeQuizData, activeProgress);
+  const markdown = [
+    '# Kết quả bài kiểm tra',
+    '',
+    `Xuất lúc: ${generatedAt.toLocaleString('vi-VN')}`,
+    'Kết quả trong file này chỉ thuộc bài đang xem.',
+    '',
+    ...renderExportResult(result),
+  ].join('\n');
+
+  try {
+    const file = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `qtm-ket-qua-bai-nay-${date}-${time}.md`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (status) status.textContent = 'Đã tải kết quả của bài này vào file Markdown.';
+  } catch {
+    if (status) status.textContent = 'Không thể tạo file Markdown trên trình duyệt này.';
+  }
 }
 
 function renderReviewCard(question, selectedIndex) {
