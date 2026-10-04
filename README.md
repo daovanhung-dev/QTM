@@ -16,9 +16,10 @@ Không mở `index.html` trực tiếp bằng đường dẫn `file://`: trình 
 
 ## Cách sử dụng
 
-- Chọn chương để làm toàn bộ câu hỏi theo thứ tự trong tài liệu, 10 câu mỗi trang.
+- Chọn chương để làm toàn bộ câu hỏi theo thứ tự trong tài liệu, từng câu một.
 - Chọn **Kiểm tra tất cả chương** để làm bài tổng hợp theo thứ tự chương và thứ tự câu trong tài liệu.
-- Chuyển qua lại giữa các trang để đổi câu trả lời; website tự lưu tiến độ trên trình duyệt hiện tại.
+- Dùng **↑/↓** để chọn đáp án, **←/→** để chuyển câu, và **Enter** để chốt đáp án rồi xem đúng/sai ngay. Mũi tên dừng ở câu đầu và câu cuối; có thể dùng chuột và các nút điều hướng trên màn hình.
+- Website tự lưu tiến độ trên trình duyệt hiện tại. Khi tiếp tục bài cũ, câu đang mở được giữ lại; tiến độ kiểu 10 câu mỗi trang trước đây được chuyển về câu đầu tiên của trang đó.
 - Nộp bài ở trang cuối để xem điểm và đáp án. Có thể lọc các câu sai hoặc chưa trả lời.
 - Chọn **Làm lại từ đầu** nếu muốn xóa lượt hiện tại và làm lại chương hoặc bài tổng hợp.
 - Chọn **Xuất kết quả Markdown** trên trang chính để tải các kết quả đã nộp gần nhất của từng chương và bài tổng hợp. File gồm điểm tổng, điểm theo chương và chi tiết câu trả lời; chỉ xuất kết quả được lưu trên trình duyệt hiện tại và khớp với nội dung đề hiện tại.

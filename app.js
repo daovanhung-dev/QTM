@@ -1,4 +1,7 @@
-const PAGE_SIZE = 10;
+const QUIZ_PAGE_SIZE = 1;
+const REVIEW_PAGE_SIZE = 10;
+const LEGACY_QUIZ_PAGE_SIZE = 10;
+const QUIZ_LAYOUT_VERSION = 'single-question-v1';
 const STORAGE_KEY = 'qtm-quiz-progress-v3';
 const MODE_END_OF_CHAPTER = 'end-of-chapter';
 const MODE_AFTER_QUESTION = 'after-question';
@@ -233,19 +236,23 @@ function readProgress(chapterData) {
   const retryCompletedQuestionIds = Array.isArray(saved.retrySession?.completedQuestionIds)
     ? [...new Set(saved.retrySession.completedQuestionIds.filter((id) => retryQuestionIds.includes(id)))]
     : [];
+  const savedUsesSingleQuestionLayout = saved.quizLayoutVersion === QUIZ_LAYOUT_VERSION;
+  const normalizeSavedQuizIndex = (index) => Math.max(0,
+    (Number.isInteger(index) ? index : 0) * (savedUsesSingleQuestionLayout ? 1 : LEGACY_QUIZ_PAGE_SIZE));
   const retrySession = retryQuestionIds.length
     ? {
       questionIds: retryQuestionIds,
       answers: retryAnswers,
       completedQuestionIds: retryCompletedQuestionIds,
-      page: Number.isInteger(saved.retrySession.page) ? saved.retrySession.page : 0,
+      page: normalizeSavedQuizIndex(saved.retrySession.page),
     }
     : null;
   return {
     answers: saved.answers,
     mode: saved.mode === MODE_AFTER_QUESTION ? MODE_AFTER_QUESTION : MODE_END_OF_CHAPTER,
     completedQuestionIds,
-    page: Number.isInteger(saved.page) ? saved.page : 0,
+    page: normalizeSavedQuizIndex(saved.page),
+    quizLayoutVersion: QUIZ_LAYOUT_VERSION,
     submitted: Boolean(saved.submitted),
     timerStartedAt: Number.isFinite(saved.timerStartedAt) ? saved.timerStartedAt : null,
     elapsedMs: Number.isFinite(saved.elapsedMs) && saved.elapsedMs >= 0 ? saved.elapsedMs : null,
@@ -296,6 +303,7 @@ function makeProgress(chapterData, mode = MODE_END_OF_CHAPTER) {
     retrySession: null,
     reviewPage: 0,
     reviewFilter: 'all',
+    quizLayoutVersion: QUIZ_LAYOUT_VERSION,
     sourceHash: chapterData.sourceHash,
   };
 }
@@ -326,6 +334,7 @@ function makeAllChaptersData() {
 
 function renderHome() {
   stopElapsedTimer();
+  appView.onkeydown = null;
   view = 'home';
   activeChapter = null;
   activeQuizData = null;
@@ -345,7 +354,7 @@ function renderHome() {
     <section class="page-heading">
       <p class="eyebrow">Bộ câu hỏi trắc nghiệm</p>
       <h1>Luyện tập theo chương</h1>
-      <p class="intro">Chọn chương và cách xem đáp án. Bạn có thể xem đáp án sau khi nộp cả chương hoặc chốt từng câu.</p>
+      <p class="intro">Chọn chương để làm từng câu. Dùng phím mũi tên để chọn đáp án và chuyển câu; nhấn Enter để chốt và xem kết quả ngay.</p>
       <div class="home-export-actions">
         <button class="button secondary" type="button" data-export-results>Xuất kết quả Markdown <span aria-hidden="true">↓</span></button>
         <span class="export-status" data-export-status role="status" aria-live="polite"></span>
@@ -586,8 +595,8 @@ function renderChapterCard(chapter, data) {
   const answered = saved ? countAnswered(saved, data.questions) : 0;
   const mode = chapterModes.get(chapter.id) ?? saved?.mode ?? MODE_END_OF_CHAPTER;
   const modeDescription = mode === MODE_AFTER_QUESTION
-    ? 'Chốt từng câu để xem đáp án ngay.'
-    : 'Xem đáp án sau khi nộp cả chương.';
+    ? 'Có thể chốt từng câu bằng Enter hoặc nút tương ứng.'
+    : 'Mặc định xem đáp án khi nộp; Enter hiện kết quả ngay.';
   let status = 'Chưa bắt đầu';
   let buttonLabel = 'Bắt đầu';
   if (saved?.submitted) {
@@ -641,8 +650,8 @@ function updateChapterMode(chapterId, mode) {
   const description = card?.querySelector('.chapter-mode-description');
   if (description) {
     description.textContent = progress.mode === MODE_AFTER_QUESTION
-      ? 'Chốt từng câu để xem đáp án ngay.'
-      : 'Xem đáp án sau khi nộp cả chương.';
+      ? 'Có thể chốt từng câu bằng Enter hoặc nút tương ứng.'
+      : 'Mặc định xem đáp án khi nộp; Enter hiện kết quả ngay.';
   }
 }
 
@@ -665,7 +674,7 @@ function startQuiz(data) {
   activeProgress = readProgress(data) ?? makeProgress(data);
   activeProgress.mode = (data.isCombined ? activeProgress.mode : chapterModes.get(data.chapter.id) ?? activeProgress.mode)
     ?? MODE_END_OF_CHAPTER;
-  activeProgress.page = Math.max(0, Math.min(activeProgress.page, pageCount(data.questions) - 1));
+  activeProgress.page = Math.max(0, Math.min(activeProgress.page, pageCount(data.questions, QUIZ_PAGE_SIZE) - 1));
   activeProgress.reviewPage = Math.max(0, activeProgress.reviewPage);
   saveProgress();
 
@@ -707,27 +716,27 @@ function renderQuiz() {
     return;
   }
   const isRetry = Boolean(activeProgress.retrySession);
-  const totalPages = pageCount(questions);
+  const totalPages = pageCount(questions, QUIZ_PAGE_SIZE);
   session.page = Math.max(0, Math.min(session.page, totalPages - 1));
-  const start = session.page * PAGE_SIZE;
-  const pageQuestions = questions.slice(start, start + PAGE_SIZE);
+  const question = questions[session.page];
   const answered = countAnswered(session, questions);
   const unanswered = questions.length - answered;
-  const completedOnPage = pageQuestions.filter((question) => isQuestionCompleted(session, question.id)).length;
   const progressPercent = questions.length ? Math.round((answered / questions.length) * 100) : 0;
-  const end = Math.min(start + pageQuestions.length, questions.length);
-  const modeHint = activeProgress.mode === MODE_AFTER_QUESTION
-    ? `${completedOnPage}/${pageQuestions.length} câu trên trang đã hoàn thành`
-    : `Đáp án hiện sau khi nộp ${isRetry ? 'lượt làm lại' : 'bài'}`;
+  const questionCompleted = isQuestionCompleted(session, question.id);
+  const modeHint = questionCompleted
+    ? 'Đã hiện kết quả câu này.'
+    : activeProgress.mode === MODE_AFTER_QUESTION
+      ? 'Nhấn Enter hoặc Hoàn thành câu để xem đáp án.'
+      : 'Nhấn Enter để chốt đáp án và xem kết quả ngay.';
   const heading = isRetry
     ? 'Làm lại câu sai'
     : activeQuizData.isCombined
       ? 'Bài tổng hợp'
       : `Chương ${escapeHtml(activeChapter.number)}`;
   const progressLabel = isRetry ? 'câu trong lượt làm lại đã trả lời' : 'câu đã trả lời';
-  const questionRange = isRetry
-    ? `Câu ${start + 1}–${end} <span class="meta-muted">/ ${questions.length} câu sai</span>`
-    : `Câu ${start + 1}–${end} <span class="meta-muted">/ ${questions.length}</span>`;
+  const questionPosition = isRetry
+    ? `Câu ${session.page + 1} / ${questions.length} trong lượt làm lại`
+    : `Câu ${session.page + 1} / ${questions.length}`;
   const unansweredLabel = unanswered
     ? `${unanswered} câu chưa chọn đáp án`
     : 'Bạn đã trả lời tất cả câu hỏi';
@@ -748,37 +757,43 @@ function renderQuiz() {
       </div>
     </section>
 
-    <div class="quiz-page-meta"><strong>${questionRange}</strong><span>Trang ${session.page + 1} / ${totalPages}</span></div>
-    <section class="question-list" aria-label="Câu hỏi trang ${session.page + 1}">
-      ${pageQuestions.map((question) => renderQuestionCard(question, session)).join('')}
+    <div class="quiz-page-meta"><strong>${questionPosition}</strong><span>Câu ${session.page + 1} / ${totalPages}</span></div>
+    <section class="question-list" aria-label="${escapeHtml(questionPosition)}">
+      ${renderQuestionCard(question, session)}
     </section>
 
     <nav class="quiz-navigation" aria-label="Điều hướng bài làm">
-      <button class="button secondary" id="previous-page" type="button" ${session.page === 0 ? 'disabled' : ''}><span aria-hidden="true">←</span> Trang trước</button>
+      <button class="button secondary" id="previous-question" type="button" ${session.page === 0 ? 'disabled' : ''}><span aria-hidden="true">←</span> Câu trước</button>
       <span class="navigation-center">${session.page + 1} / ${totalPages}</span>
       ${session.page < totalPages - 1
-        ? '<button class="button" id="next-page" type="button">Trang tiếp <span aria-hidden="true">→</span></button>'
+        ? '<button class="button" id="next-question" type="button">Câu tiếp <span aria-hidden="true">→</span></button>'
         : `<button class="button" id="submit-quiz" type="button">${isRetry ? 'Nộp lượt làm lại' : 'Nộp bài'} <span aria-hidden="true">✓</span></button>`}
     </nav>
+    <p class="keyboard-hint" aria-label="Phím tắt">↑/↓ chọn đáp án · ←/→ chuyển câu · Enter chốt và xem kết quả</p>
     <p class="resume-note">${unansweredLabel} · Tiến độ được lưu tự động</p>
   `;
 
   appView.querySelector('#back-to-chapters').addEventListener('click', renderHome);
-  appView.querySelector('#previous-page').addEventListener('click', () => moveQuizPage(-1));
-  appView.querySelector('#next-page')?.addEventListener('click', () => moveQuizPage(1));
+  appView.querySelector('#previous-question').addEventListener('click', () => moveQuizQuestion(-1));
+  appView.querySelector('#next-question')?.addEventListener('click', () => moveQuizQuestion(1));
   appView.querySelector('#submit-quiz')?.addEventListener('click', submitQuiz);
   appView.querySelectorAll('input[data-question-id]').forEach((input) => {
     input.addEventListener('change', () => {
       session.answers[input.dataset.questionId] = Number(input.value);
       saveProgress();
+      const card = input.closest('[data-question-card]');
+      card?.querySelectorAll('.choice-content').forEach((choice, index) => {
+        choice.classList.toggle('is-keyboard-candidate', index === Number(input.value));
+      });
       updateQuizProgress();
     });
   });
   appView.querySelectorAll('[data-complete-question]').forEach((button) => {
     button.addEventListener('click', () => completeQuestion(button.dataset.completeQuestion));
   });
+  appView.onkeydown = handleQuizKeydown;
   startElapsedTimer();
-  focusViewHeading();
+  focusQuizAnswer();
 }
 
 function stopElapsedTimer() {
@@ -822,9 +837,11 @@ function startElapsedTimer() {
 }
 
 function renderQuestionCard(question, progress) {
-  const selectedIndex = progress.answers[question.id];
   const completed = isQuestionCompleted(progress, question.id);
-  const revealAnswer = activeProgress.mode === MODE_AFTER_QUESTION && completed;
+  const savedIndex = progress.answers[question.id];
+  const candidateIndex = Number.isInteger(savedIndex) ? savedIndex : 0;
+  const selectedIndex = Number.isInteger(savedIndex) ? savedIndex : null;
+  const revealAnswer = completed;
   const selectedCorrect = selectedIndex === question.correctIndex;
   const questionChapter = question.chapter ?? activeChapter;
   const chapterLabel = activeQuizData.isCombined
@@ -843,10 +860,15 @@ function renderQuestionCard(question, progress) {
         : selectedWrong
           ? '<span class="choice-answer-tag">Bạn đã chọn</span>'
           : '';
-    const classes = ['choice-content', correct ? 'is-answer' : '', selectedWrong ? 'is-selected-wrong' : ''].filter(Boolean).join(' ');
+    const classes = [
+      'choice-content',
+      !completed && candidateIndex === index ? 'is-keyboard-candidate' : '',
+      correct ? 'is-answer' : '',
+      selectedWrong ? 'is-selected-wrong' : '',
+    ].filter(Boolean).join(' ');
     return `
       <label class="answer-choice ${completed ? 'is-locked' : ''}">
-        <input type="radio" name="answer-${question.id}" value="${index}" data-question-id="${question.id}" ${selectedIndex === index ? 'checked' : ''} ${completed ? 'disabled' : ''} />
+        <input type="radio" name="answer-${question.id}" value="${index}" data-question-id="${question.id}" ${savedIndex === index ? 'checked' : ''} ${completed ? 'disabled' : ''} />
         <span class="${classes}"><span class="choice-letter" aria-hidden="true">${option.letter}</span><span class="choice-text">${renderRichText(option.text)}</span>${tag}</span>
       </label>
     `;
@@ -860,18 +882,88 @@ function renderQuestionCard(question, progress) {
         <legend>Chọn một đáp án cho ${activeQuizData.isCombined ? `${escapeHtml(questionChapter.title)}, ` : ''}câu ${question.number}</legend>
         ${choices}
       </fieldset>
-      ${activeProgress.mode === MODE_AFTER_QUESTION
-        ? completed
-          ? `<p class="question-feedback ${selectedCorrect ? 'is-correct' : 'is-wrong'}" role="status">${selectedCorrect ? 'Chính xác.' : 'Chưa chính xác.'} Đáp án đúng được đánh dấu bên trên.</p>`
-          : `<div class="question-action"><button class="button secondary" type="button" data-complete-question="${question.id}" ${Number.isInteger(selectedIndex) ? '' : 'disabled'}>Hoàn thành câu</button></div>`
-        : ''}
+      ${completed
+        ? `<p class="question-feedback ${selectedCorrect ? 'is-correct' : 'is-wrong'}" role="status" tabindex="-1">${selectedCorrect ? 'Chính xác.' : 'Chưa chính xác.'} Đáp án đúng được đánh dấu bên trên.</p>`
+        : activeProgress.mode === MODE_AFTER_QUESTION
+          ? `<div class="question-action"><button class="button secondary" type="button" data-complete-question="${question.id}" ${Number.isInteger(progress.answers[question.id]) ? '' : 'disabled'}>Hoàn thành câu</button></div>`
+          : ''}
     </article>
   `;
 }
 
-function completeQuestion(questionId) {
+function handleQuizKeydown(event) {
+  if (view !== 'quiz' || event.altKey || event.ctrlKey || event.metaKey) return;
+
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    moveQuizQuestion(event.key === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
+
   const session = getActiveQuizSession();
-  if (activeProgress.mode !== MODE_AFTER_QUESTION
+  const questions = getActiveQuizQuestions();
+  const question = questions[session.page];
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (!question || isQuestionCompleted(session, question.id)) return;
+
+    const optionCount = question.options.length;
+    const currentIndex = getKeyboardAnswerIndex(question, session);
+    const offset = event.key === 'ArrowUp' ? -1 : 1;
+    const nextIndex = (currentIndex + offset + optionCount) % optionCount;
+    session.answers[question.id] = nextIndex;
+    saveProgress();
+
+    const card = appView.querySelector(`[data-question-card="${question.id}"]`);
+    const inputs = [...(card?.querySelectorAll('input[data-question-id]') ?? [])];
+    card?.querySelectorAll('.choice-content').forEach((choice, index) => {
+      choice.classList.toggle('is-keyboard-candidate', index === nextIndex);
+    });
+    const nextInput = inputs.find((input) => Number(input.value) === nextIndex);
+    if (nextInput) nextInput.checked = true;
+    nextInput?.focus({ preventScroll: true });
+    updateQuizProgress();
+    return;
+  }
+
+  if (event.key !== 'Enter') return;
+  const target = event.target;
+  if (target instanceof Element
+    && (target.closest('button, a, select, textarea, input:not([type="radio"])') || target.isContentEditable)) return;
+
+  event.preventDefault();
+  if (!question || isQuestionCompleted(session, question.id)) return;
+  session.answers[question.id] = getKeyboardAnswerIndex(question, session);
+  completeQuestion(question.id, true);
+}
+
+function getKeyboardAnswerIndex(question, session) {
+  const savedIndex = session.answers[question.id];
+  return Number.isInteger(savedIndex) && savedIndex >= 0 && savedIndex < question.options.length
+    ? savedIndex
+    : 0;
+}
+
+function focusQuizAnswer() {
+  const session = getActiveQuizSession();
+  const question = getActiveQuizQuestions()[session.page];
+  const card = appView.querySelector('[data-question-card]');
+  if (!question || !card) return;
+
+  if (isQuestionCompleted(session, question.id)) {
+    (card.querySelector('.question-feedback') ?? card.querySelector('.question-prompt'))
+      ?.focus({ preventScroll: true });
+    return;
+  }
+  const index = getKeyboardAnswerIndex(question, session);
+  [...card.querySelectorAll('input[data-question-id]')]
+    .find((input) => Number(input.value) === index)
+    ?.focus({ preventScroll: true });
+}
+
+function completeQuestion(questionId, revealRegardlessOfMode = false) {
+  const session = getActiveQuizSession();
+  if ((!revealRegardlessOfMode && activeProgress.mode !== MODE_AFTER_QUESTION)
     || !Number.isInteger(session.answers[questionId])
     || isQuestionCompleted(session, questionId)) return;
 
@@ -901,16 +993,18 @@ function updateQuizProgress() {
   const fill = appView.querySelector('.progress-fill');
   const meta = appView.querySelector('.progress-meta strong');
   const note = appView.querySelector('.resume-note');
+  const currentQuestion = questions[session.page];
+  const questionCompleted = currentQuestion && isQuestionCompleted(session, currentQuestion.id);
   if (progress) progress.setAttribute('aria-valuenow', String(answered));
   if (fill) fill.style.width = `${Math.round((answered / questions.length) * 100)}%`;
   if (meta) meta.textContent = `${answered}/${questions.length} ${activeProgress.retrySession ? 'câu trong lượt làm lại đã trả lời' : 'câu đã trả lời'}`;
-  const pageStart = session.page * PAGE_SIZE;
-  const pageQuestions = questions.slice(pageStart, pageStart + PAGE_SIZE);
   const modeHint = appView.querySelector('#quiz-mode-hint');
   if (modeHint) {
-    modeHint.textContent = activeProgress.mode === MODE_AFTER_QUESTION
-      ? `${pageQuestions.filter((question) => isQuestionCompleted(session, question.id)).length}/${pageQuestions.length} câu trên trang đã hoàn thành`
-      : `Đáp án hiện sau khi nộp ${activeProgress.retrySession ? 'lượt làm lại' : 'bài'}`;
+    modeHint.textContent = questionCompleted
+      ? 'Đã hiện kết quả câu này.'
+      : activeProgress.mode === MODE_AFTER_QUESTION
+        ? 'Nhấn Enter hoặc Hoàn thành câu để chốt và xem đáp án.'
+        : 'Nhấn Enter để chốt đáp án và xem kết quả ngay.';
   }
   appView.querySelectorAll('[data-complete-question]').forEach((button) => {
     const selected = session.answers[button.dataset.completeQuestion];
@@ -919,13 +1013,15 @@ function updateQuizProgress() {
   if (note) note.textContent = `${unanswered ? `${unanswered} câu chưa chọn đáp án` : 'Bạn đã trả lời tất cả câu hỏi'} · Tiến độ được lưu tự động`;
 }
 
-function moveQuizPage(offset) {
+function moveQuizQuestion(offset) {
   const session = getActiveQuizSession();
   const questions = getActiveQuizQuestions();
-  session.page = Math.max(0, Math.min(pageCount(questions) - 1, session.page + offset));
+  const nextIndex = Math.max(0, Math.min(pageCount(questions, QUIZ_PAGE_SIZE) - 1, session.page + offset));
+  if (nextIndex === session.page) return;
+  session.page = nextIndex;
   saveProgress();
   renderQuiz();
-  if (offset > 0) scrollToTop();
+  scrollToTop();
 }
 
 function submitQuiz() {
@@ -972,14 +1068,15 @@ function submitWrongQuestionRetry() {
 
 function renderResults() {
   stopElapsedTimer();
+  appView.onkeydown = null;
   view = 'results';
   const data = activeQuizData;
   const score = calculateScore(activeProgress, data.questions);
   const filtered = getReviewQuestions(data.questions, activeProgress);
-  const totalPages = Math.max(1, pageCount(filtered));
+  const totalPages = Math.max(1, pageCount(filtered, REVIEW_PAGE_SIZE));
   activeProgress.reviewPage = Math.min(activeProgress.reviewPage, totalPages - 1);
-  const start = activeProgress.reviewPage * PAGE_SIZE;
-  const end = Math.min(start + PAGE_SIZE, filtered.length);
+  const start = activeProgress.reviewPage * REVIEW_PAGE_SIZE;
+  const end = Math.min(start + REVIEW_PAGE_SIZE, filtered.length);
   const pageQuestions = filtered.slice(start, end);
   const percent = Math.round((score.correct / data.questions.length) * 100);
   const elapsedTime = formatElapsedTime(getElapsedTimeMs(activeProgress));
@@ -1121,7 +1218,7 @@ function startWrongQuestionRetry() {
 
 function moveReviewPage(offset) {
   const filtered = getReviewQuestions(activeQuizData.questions, activeProgress);
-  activeProgress.reviewPage = Math.max(0, Math.min(pageCount(filtered) - 1, activeProgress.reviewPage + offset));
+  activeProgress.reviewPage = Math.max(0, Math.min(pageCount(filtered, REVIEW_PAGE_SIZE) - 1, activeProgress.reviewPage + offset));
   saveProgress();
   renderResults();
   if (offset > 0) scrollToTop();
@@ -1152,8 +1249,8 @@ function calculateScore(progress, questions) {
   return { correct, wrong: answered - correct, unanswered: questions.length - answered };
 }
 
-function pageCount(items) {
-  return Math.ceil(items.length / PAGE_SIZE);
+function pageCount(items, pageSize = REVIEW_PAGE_SIZE) {
+  return Math.ceil(items.length / pageSize);
 }
 
 function formatNumber(value) {
