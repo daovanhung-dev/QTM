@@ -40,6 +40,18 @@ const chapters = [
     title: 'Setting Up Network Services',
     file: 'docs/Trac_nghiem_Chuong_7_Network_Services.md',
   },
+  {
+    id: 'chapter-8',
+    number: '08',
+    title: 'Sharing and Transferring Files',
+    file: 'docs/chuong_08_trac_nghiem_on_tap.md',
+  },
+  {
+    id: 'chapter-9',
+    number: '09',
+    title: 'Managing Databases',
+    file: 'docs/chuong_09_trac_nghiem_on_tap.md',
+  },
 ];
 
 const appView = document.querySelector('#app-view');

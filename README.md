@@ -1,6 +1,6 @@
 # Website luyện trắc nghiệm QTM
 
-Website tĩnh đọc trực tiếp sáu tệp đề Markdown trong thư mục `docs/`. Không cần cài thư viện hay cấu hình máy chủ ứng dụng.
+Website tĩnh đọc trực tiếp tám tệp đề Markdown trong thư mục `docs/`. Không cần cài thư viện hay cấu hình máy chủ ứng dụng.
 
 ## Chạy trên máy
 
