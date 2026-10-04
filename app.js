@@ -2,62 +2,16 @@ const PAGE_SIZE = 10;
 const STORAGE_KEY = 'qtm-quiz-progress-v3';
 const MODE_END_OF_CHAPTER = 'end-of-chapter';
 const MODE_AFTER_QUESTION = 'after-question';
-
-const chapters = [
-  {
-    id: 'chapter-2',
-    number: '02',
-    title: 'Managing Users',
-    file: 'docs/trac_nghiem_chuong_02_managing_users.md',
-  },
-  {
-    id: 'chapter-3',
-    number: '03',
-    title: 'Managing Storage Volumes',
-    file: 'docs/chuong_03_trac_nghiem_on_tap.md',
-  },
-  {
-    id: 'chapter-4',
-    number: '04',
-    title: 'Connecting to Networks',
-    file: 'docs/chuong_4_trac_nghiem_on_tap.md',
-  },
-  {
-    id: 'chapter-5',
-    number: '05',
-    title: 'Managing Software Packages',
-    file: 'docs/Trac_nghiem_Chuong_05_Managing_Software_Packages.md',
-  },
-  {
-    id: 'chapter-6',
-    number: '06',
-    title: 'Controlling and Monitoring Processes',
-    file: 'docs/chuong_06_trac_nghiem_on_tap.md',
-  },
-  {
-    id: 'chapter-7',
-    number: '07',
-    title: 'Setting Up Network Services',
-    file: 'docs/Trac_nghiem_Chuong_7_Network_Services.md',
-  },
-  {
-    id: 'chapter-8',
-    number: '08',
-    title: 'Sharing and Transferring Files',
-    file: 'docs/chuong_08_trac_nghiem_on_tap.md',
-  },
-  {
-    id: 'chapter-9',
-    number: '09',
-    title: 'Managing Databases',
-    file: 'docs/chuong_09_trac_nghiem_on_tap.md',
-  },
-];
+const CHAPTERS_MANIFEST = 'docs/chapters.json';
+const ALL_CHAPTERS_ID = 'all-chapters';
 
 const appView = document.querySelector('#app-view');
+let chapters = [];
+let catalogError = null;
 const loadedChapters = new Map();
 const chapterModes = new Map();
 let activeChapter = null;
+let activeQuizData = null;
 let activeProgress = null;
 let view = 'home';
 let storageAvailable = true;
@@ -66,6 +20,14 @@ let elapsedTimerInterval = null;
 boot();
 
 async function boot() {
+  try {
+    chapters = await loadChapterManifest();
+  } catch (error) {
+    catalogError = error.message;
+    renderHome();
+    return;
+  }
+
   const results = await Promise.all(chapters.map(loadChapter));
   results.forEach((result) => {
     if (result.error) {
@@ -75,6 +37,40 @@ async function boot() {
     }
   });
   renderHome();
+}
+
+async function loadChapterManifest() {
+  const response = await fetch(CHAPTERS_MANIFEST, { cache: 'no-cache' });
+  if (!response.ok) {
+    throw new Error(`Không tải được danh mục chương (${response.status}).`);
+  }
+
+  const manifest = await response.json();
+  if (!Array.isArray(manifest) || !manifest.length) {
+    throw new Error('Danh mục chương phải là một mảng JSON không rỗng.');
+  }
+
+  const ids = new Set();
+  const files = new Set();
+  return manifest.map((chapter, index) => {
+    if (!chapter || ['id', 'number', 'title', 'file'].some((key) => typeof chapter[key] !== 'string' || !chapter[key].trim())) {
+      throw new Error(`Mục chương thứ ${index + 1} trong danh mục thiếu id, number, title hoặc file.`);
+    }
+    if (!/^[\w-]+$/.test(chapter.id) || [ALL_CHAPTERS_ID, '__proto__', 'constructor', 'prototype'].includes(chapter.id)) {
+      throw new Error(`Mã chương tại mục ${index + 1} không hợp lệ hoặc trùng với mã dành riêng.`);
+    }
+    if (ids.has(chapter.id) || files.has(chapter.file)) {
+      throw new Error(`Danh mục chương có id hoặc đường dẫn bị trùng tại mục ${index + 1}.`);
+    }
+    ids.add(chapter.id);
+    files.add(chapter.file);
+    return {
+      id: String(chapter.id),
+      number: String(chapter.number),
+      title: String(chapter.title),
+      file: String(chapter.file),
+    };
+  });
 }
 
 async function loadChapter(chapter) {
@@ -304,10 +300,35 @@ function makeProgress(chapterData, mode = MODE_END_OF_CHAPTER) {
   };
 }
 
+function makeAllChaptersData() {
+  if (!chapters.length) return null;
+  const chapterData = chapters.map((chapter) => loadedChapters.get(chapter.id));
+  if (chapterData.some((data) => !data || data.error)) return null;
+
+  const sourceSignature = chapterData.map(({ chapter, sourceHash }) => ({
+    id: chapter.id,
+    number: chapter.number,
+    title: chapter.title,
+    file: chapter.file,
+    sourceHash,
+  }));
+  return {
+    chapter: { id: ALL_CHAPTERS_ID, number: '', title: 'Kiểm tra tất cả chương' },
+    chapters: chapterData,
+    isCombined: true,
+    questions: chapterData.flatMap((data) => data.questions.map((question) => ({
+      ...question,
+      chapter: data.chapter,
+    }))),
+    sourceHash: hashText(JSON.stringify(sourceSignature)),
+  };
+}
+
 function renderHome() {
   stopElapsedTimer();
   view = 'home';
   activeChapter = null;
+  activeQuizData = null;
   activeProgress = null;
   const errors = chapters
     .map((chapter) => loadedChapters.get(chapter.id))
@@ -315,15 +336,22 @@ function renderHome() {
   const available = chapters
     .map((chapter) => loadedChapters.get(chapter.id))
     .filter((item) => item && !item.error);
+  const allChaptersData = makeAllChaptersData();
   const totalQuestions = available.reduce((sum, item) => sum + item.questions.length, 0);
 
   appView.innerHTML = `
+    ${catalogError ? renderCatalogErrorBanner(catalogError) : ''}
     ${errors.length ? renderErrorBanner(errors) : ''}
     <section class="page-heading">
       <p class="eyebrow">Bộ câu hỏi trắc nghiệm</p>
       <h1>Luyện tập theo chương</h1>
       <p class="intro">Chọn chương và cách xem đáp án. Bạn có thể xem đáp án sau khi nộp cả chương hoặc chốt từng câu.</p>
+      <div class="home-export-actions">
+        <button class="button secondary" type="button" data-export-results>Xuất kết quả Markdown <span aria-hidden="true">↓</span></button>
+        <span class="export-status" data-export-status role="status" aria-live="polite"></span>
+      </div>
     </section>
+    ${renderAllChaptersCard(allChaptersData, errors)}
     <section class="chapter-grid" aria-label="Danh sách chương">
       ${chapters.map((chapter) => renderChapterCard(chapter, loadedChapters.get(chapter.id))).join('')}
     </section>
@@ -334,10 +362,146 @@ function renderHome() {
   appView.querySelectorAll('[data-start-chapter]').forEach((button) => {
     button.addEventListener('click', () => startChapter(button.dataset.startChapter));
   });
+  appView.querySelector('[data-export-results]')?.addEventListener('click', exportResultsMarkdown);
+  appView.querySelector('[data-start-all-chapters]')?.addEventListener('click', startAllChapters);
   appView.querySelectorAll('[data-mode-chapter]').forEach((input) => {
     input.addEventListener('change', () => updateChapterMode(input.dataset.modeChapter, input.value));
   });
+  appView.querySelectorAll('[data-mode-all-chapters]').forEach((input) => {
+    input.addEventListener('change', () => updateAllChaptersMode(input.value));
+  });
   focusViewHeading();
+}
+
+function collectSubmittedResults() {
+  const results = [];
+  const allChaptersData = makeAllChaptersData();
+  if (allChaptersData) {
+    const progress = readProgress(allChaptersData);
+    if (progress?.submitted) results.push(makeExportResult(allChaptersData, progress));
+  }
+
+  for (const chapter of chapters) {
+    const data = loadedChapters.get(chapter.id);
+    if (!data || data.error) continue;
+    const progress = readProgress(data);
+    if (progress?.submitted) results.push(makeExportResult(data, progress));
+  }
+
+  return results;
+}
+
+function makeExportResult(data, progress) {
+  const answers = {};
+  for (const question of data.questions) {
+    const selected = progress.answers[question.id];
+    if (Number.isInteger(selected) && selected >= 0 && selected < question.options.length) {
+      answers[question.id] = selected;
+    }
+  }
+  const normalizedProgress = { ...progress, answers };
+  return {
+    data,
+    progress: normalizedProgress,
+    score: calculateScore(normalizedProgress, data.questions),
+  };
+}
+
+function exportResultsMarkdown() {
+  const status = appView.querySelector('[data-export-status]');
+  const results = collectSubmittedResults();
+  if (!results.length) {
+    if (status) status.textContent = 'Chưa có kết quả đã nộp hợp lệ để xuất.';
+    return;
+  }
+
+  const generatedAt = new Date();
+  const date = [generatedAt.getFullYear(), String(generatedAt.getMonth() + 1).padStart(2, '0'), String(generatedAt.getDate()).padStart(2, '0')].join('-');
+  const markdown = [
+    '# Kết quả làm bài QTM',
+    '',
+    `Xuất lúc: ${generatedAt.toLocaleString('vi-VN')}`,
+    `Số bài đã nộp: ${results.length}`,
+    '',
+    ...results.flatMap(renderExportResult),
+  ].join('\n');
+
+  try {
+    const file = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `qtm-ket-qua-lam-bai-${date}.md`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (status) status.textContent = `Đã xuất ${results.length} kết quả vào file Markdown.`;
+  } catch {
+    if (status) status.textContent = 'Không thể tạo file Markdown trên trình duyệt này.';
+  }
+}
+
+function renderExportResult({ data, progress, score }) {
+  const percent = Math.round((score.correct / data.questions.length) * 100);
+  const title = data.isCombined
+    ? 'Bài tổng hợp tất cả chương'
+    : `Chương ${data.chapter.number} · ${data.chapter.title}`;
+  const lines = [
+    `## ${escapeMarkdownHeading(title)}`,
+    '',
+    `- Điểm tổng: **${score.correct}/${data.questions.length} câu đúng (${percent}%)**`,
+    `- Kết quả: ${score.wrong} câu sai · ${score.unanswered} câu bỏ trống`,
+    `- Thời gian làm bài: ${formatElapsedTime(getElapsedTimeMs(progress))}`,
+    '',
+    '### Điểm theo chương',
+    '',
+  ];
+
+  const chapterData = data.isCombined ? data.chapters : [data];
+  for (const item of chapterData) {
+    const chapterScore = calculateScore(progress, item.questions);
+    lines.push(`- **CH ${escapeMarkdownHeading(item.chapter.number)} · ${escapeMarkdownHeading(item.chapter.title)}:** ${chapterScore.correct}/${item.questions.length} đúng, ${chapterScore.wrong} sai, ${chapterScore.unanswered} bỏ trống`);
+  }
+
+  lines.push('', '### Chi tiết từng câu', '');
+  for (const question of data.questions) {
+    const selectedIndex = progress.answers[question.id];
+    const selectedOption = Number.isInteger(selectedIndex) ? question.options[selectedIndex] : null;
+    const correctOption = question.options[question.correctIndex];
+    const questionChapter = question.chapter ?? data.chapter;
+    const questionHeading = data.isCombined
+      ? `CH ${questionChapter.number} · ${questionChapter.title} — Câu ${question.number}`
+      : `Câu ${question.number}`;
+    const resultLabel = selectedOption
+      ? selectedIndex === question.correctIndex ? 'Đúng' : 'Sai'
+      : 'Bỏ trống';
+
+    lines.push(`#### ${escapeMarkdownHeading(questionHeading)}`, '');
+    lines.push('**Nội dung câu hỏi**', '', markdownBlockquote(question.prompt), '');
+    lines.push(`- Bạn chọn: ${selectedOption ? `${selectedOption.letter}. ${selectedOption.text}` : 'Bỏ trống'}`);
+    lines.push(`- Đáp án đúng: ${correctOption.letter}. ${correctOption.text}`);
+    lines.push(`- Kết quả: **${resultLabel}**`, '');
+  }
+
+  return [...lines, ''];
+}
+
+function markdownBlockquote(value) {
+  return String(value).split(/\r?\n/).map((line) => line ? `> ${line}` : '>').join('\n');
+}
+
+function escapeMarkdownHeading(value) {
+  return String(value).replace(/([\\`*_{}\[\]()#+.!|>])/g, '\\$1');
+}
+
+function renderCatalogErrorBanner(message) {
+  return `
+    <div class="error-banner" role="alert">
+      <strong>Không đọc được danh mục chương</strong>
+      <span>${escapeHtml(message)} Kiểm tra tệp <code>${CHAPTERS_MANIFEST}</code>.</span>
+    </div>
+  `;
 }
 
 function renderErrorBanner(errors) {
@@ -350,12 +514,68 @@ function renderErrorBanner(errors) {
   `;
 }
 
+function renderAllChaptersCard(data, errors) {
+  const saved = data ? readProgress(data) : null;
+  const answered = saved && data ? countAnswered(saved, data.questions) : 0;
+  const mode = saved?.mode ?? MODE_END_OF_CHAPTER;
+  let status = 'Chưa bắt đầu';
+  let buttonLabel = 'Bắt đầu kiểm tra';
+  if (saved?.submitted) {
+    const score = calculateScore(saved, data.questions);
+    if (saved.retrySession) {
+      const retryQuestions = data.questions.filter((question) => saved.retrySession.questionIds.includes(question.id));
+      const retryAnswered = countAnswered(saved.retrySession, retryQuestions);
+      status = `Đang làm lại · ${retryAnswered}/${retryQuestions.length} câu đã chọn`;
+      buttonLabel = 'Tiếp tục làm lại';
+    } else {
+      status = `Đã hoàn thành · ${score.correct}/${data.questions.length} câu đúng`;
+      buttonLabel = 'Xem kết quả';
+    }
+  } else if (saved && (answered > 0 || Number.isFinite(saved.timerStartedAt))) {
+    status = `Đang làm · ${answered}/${data.questions.length} câu đã chọn`;
+    buttonLabel = 'Tiếp tục kiểm tra';
+  }
+
+  const summary = data
+    ? `${formatNumber(data.questions.length)} câu · ${data.chapters.length} chương`
+    : errors.length
+      ? `Cần tải đủ ${chapters.length} chương để bắt đầu bài tổng hợp.`
+      : 'Chưa có danh mục chương hợp lệ.';
+
+  return `
+    <article class="all-chapters-card">
+      <div class="all-chapters-copy">
+        <p class="eyebrow">Bài tổng hợp</p>
+        <h2>Kiểm tra tất cả chương</h2>
+        <p>${summary} · Theo thứ tự chương, chấm điểm cuối lượt.</p>
+      </div>
+      <fieldset class="chapter-mode-picker all-chapters-mode-picker" ${data ? '' : 'disabled'}>
+        <legend>Chế độ hiện đáp án</legend>
+        <label><input type="radio" name="mode-all-chapters" value="${MODE_END_OF_CHAPTER}" data-mode-all-chapters ${mode === MODE_END_OF_CHAPTER ? 'checked' : ''} /><span>Làm hết rồi xem đáp án</span></label>
+        <label><input type="radio" name="mode-all-chapters" value="${MODE_AFTER_QUESTION}" data-mode-all-chapters ${mode === MODE_AFTER_QUESTION ? 'checked' : ''} /><span>Chốt từng câu</span></label>
+      </fieldset>
+      <div class="all-chapters-action">
+        <span class="saved-state ${saved?.submitted ? 'is-complete' : saved && answered ? 'has-progress' : ''}">${escapeHtml(status)}</span>
+        <button class="button" type="button" data-start-all-chapters ${data ? '' : 'disabled'}>${buttonLabel}<span aria-hidden="true">→</span></button>
+      </div>
+    </article>
+  `;
+}
+
+function updateAllChaptersMode(mode) {
+  const data = makeAllChaptersData();
+  if (!data) return;
+  const progress = readProgress(data) ?? makeProgress(data);
+  progress.mode = mode === MODE_AFTER_QUESTION ? MODE_AFTER_QUESTION : MODE_END_OF_CHAPTER;
+  writeProgress(ALL_CHAPTERS_ID, progress);
+}
+
 function renderChapterCard(chapter, data) {
   if (!data) return '';
   if (data.error) {
     return `
       <article class="chapter-card unavailable-card">
-        <div class="chapter-card-top"><span class="chapter-number">CH ${chapter.number}</span><span class="chapter-count">Chưa tải được</span></div>
+        <div class="chapter-card-top"><span class="chapter-number">CH ${escapeHtml(chapter.number)}</span><span class="chapter-count">Chưa tải được</span></div>
         <h2>${escapeHtml(chapter.title)}</h2>
         <p class="unavailable-filename">${escapeHtml(chapter.file)}</p>
       </article>
@@ -389,7 +609,7 @@ function renderChapterCard(chapter, data) {
   return `
     <article class="chapter-card">
       <div class="chapter-card-top">
-        <span class="chapter-number">CH ${chapter.number}</span>
+        <span class="chapter-number">CH ${escapeHtml(chapter.number)}</span>
         <span class="chapter-count">${formatNumber(data.questions.length)} câu</span>
       </div>
       <h2>${escapeHtml(chapter.title)}</h2>
@@ -430,9 +650,21 @@ function startChapter(chapterId) {
   const data = loadedChapters.get(chapterId);
   if (!data || data.error) return;
 
+  startQuiz(data);
+}
+
+function startAllChapters() {
+  const data = makeAllChaptersData();
+  if (!data) return;
+  startQuiz(data);
+}
+
+function startQuiz(data) {
+  activeQuizData = data;
   activeChapter = data.chapter;
   activeProgress = readProgress(data) ?? makeProgress(data);
-  activeProgress.mode = chapterModes.get(chapterId) ?? activeProgress.mode ?? MODE_END_OF_CHAPTER;
+  activeProgress.mode = (data.isCombined ? activeProgress.mode : chapterModes.get(data.chapter.id) ?? activeProgress.mode)
+    ?? MODE_END_OF_CHAPTER;
   activeProgress.page = Math.max(0, Math.min(activeProgress.page, pageCount(data.questions) - 1));
   activeProgress.reviewPage = Math.max(0, activeProgress.reviewPage);
   saveProgress();
@@ -451,7 +683,7 @@ function getActiveQuizSession() {
 }
 
 function getActiveQuizQuestions() {
-  const questions = loadedChapters.get(activeChapter.id).questions;
+  const questions = activeQuizData.questions;
   const retrySession = activeProgress.retrySession;
   if (!retrySession) return questions;
   const retryIds = new Set(retrySession.questionIds);
@@ -487,7 +719,11 @@ function renderQuiz() {
   const modeHint = activeProgress.mode === MODE_AFTER_QUESTION
     ? `${completedOnPage}/${pageQuestions.length} câu trên trang đã hoàn thành`
     : `Đáp án hiện sau khi nộp ${isRetry ? 'lượt làm lại' : 'bài'}`;
-  const heading = isRetry ? 'Làm lại câu sai' : `Chương ${activeChapter.number}`;
+  const heading = isRetry
+    ? 'Làm lại câu sai'
+    : activeQuizData.isCombined
+      ? 'Bài tổng hợp'
+      : `Chương ${escapeHtml(activeChapter.number)}`;
   const progressLabel = isRetry ? 'câu trong lượt làm lại đã trả lời' : 'câu đã trả lời';
   const questionRange = isRetry
     ? `Câu ${start + 1}–${end} <span class="meta-muted">/ ${questions.length} câu sai</span>`
@@ -590,6 +826,13 @@ function renderQuestionCard(question, progress) {
   const completed = isQuestionCompleted(progress, question.id);
   const revealAnswer = activeProgress.mode === MODE_AFTER_QUESTION && completed;
   const selectedCorrect = selectedIndex === question.correctIndex;
+  const questionChapter = question.chapter ?? activeChapter;
+  const chapterLabel = activeQuizData.isCombined
+    ? `<span class="topic question-chapter-label">CH ${escapeHtml(questionChapter.number)} · ${escapeHtml(questionChapter.title)}</span>`
+    : '';
+  const sectionLabel = question.section && (!activeQuizData.isCombined || question.section !== questionChapter.title)
+    ? `<span class="topic">${escapeHtml(question.section)}</span>`
+    : '';
   const choices = question.options.map((option, index) => {
     const correct = revealAnswer && index === question.correctIndex;
     const selectedWrong = revealAnswer && selectedIndex === index && !selectedCorrect;
@@ -611,10 +854,10 @@ function renderQuestionCard(question, progress) {
 
   return `
     <article class="question-card ${completed ? 'is-completed' : ''}" data-question-card="${question.id}">
-      <div class="question-label">Câu ${question.number}${question.section ? `<span class="topic">${escapeHtml(question.section)}</span>` : ''}</div>
+      <div class="question-label">Câu ${question.number}${chapterLabel}${sectionLabel}</div>
       <p class="question-prompt">${renderRichText(question.prompt)}</p>
       <fieldset class="question-options">
-        <legend>Chọn một đáp án cho câu ${question.number}</legend>
+        <legend>Chọn một đáp án cho ${activeQuizData.isCombined ? `${escapeHtml(questionChapter.title)}, ` : ''}câu ${question.number}</legend>
         ${choices}
       </fieldset>
       ${activeProgress.mode === MODE_AFTER_QUESTION
@@ -635,7 +878,7 @@ function completeQuestion(questionId) {
   session.completedQuestionIds.push(questionId);
   saveProgress();
 
-  const question = loadedChapters.get(activeChapter.id).questions.find((item) => item.id === questionId);
+  const question = activeQuizData.questions.find((item) => item.id === questionId);
   const card = appView.querySelector(`[data-question-card="${questionId}"]`);
   if (!question || !card) return;
   card.outerHTML = renderQuestionCard(question, session);
@@ -690,7 +933,7 @@ function submitQuiz() {
     submitWrongQuestionRetry();
     return;
   }
-  const data = loadedChapters.get(activeChapter.id);
+  const data = activeQuizData;
   const unanswered = data.questions.length - countAnswered(activeProgress, data.questions);
   if (unanswered > 0) {
     const shouldSubmit = window.confirm(`Còn ${unanswered} câu chưa trả lời. Câu bỏ trống không được tính điểm. Bạn vẫn muốn nộp bài?`);
@@ -730,7 +973,7 @@ function submitWrongQuestionRetry() {
 function renderResults() {
   stopElapsedTimer();
   view = 'results';
-  const data = loadedChapters.get(activeChapter.id);
+  const data = activeQuizData;
   const score = calculateScore(activeProgress, data.questions);
   const filtered = getReviewQuestions(data.questions, activeProgress);
   const totalPages = Math.max(1, pageCount(filtered));
@@ -740,10 +983,23 @@ function renderResults() {
   const pageQuestions = filtered.slice(start, end);
   const percent = Math.round((score.correct / data.questions.length) * 100);
   const elapsedTime = formatElapsedTime(getElapsedTimeMs(activeProgress));
+  const chapterBreakdown = data.isCombined
+    ? `<section class="chapter-score-section" aria-label="Điểm theo chương">
+        <h2>Điểm theo chương</h2>
+        <div class="chapter-score-grid">${data.chapters.map((chapterData) => {
+          const chapterScore = calculateScore(activeProgress, chapterData.questions);
+          return `<article class="chapter-score-card">
+            <strong>CH ${escapeHtml(chapterData.chapter.number)} · ${escapeHtml(chapterData.chapter.title)}</strong>
+            <span>${chapterScore.correct}/${chapterData.questions.length} đúng</span>
+            <small>${chapterScore.wrong} sai · ${chapterScore.unanswered} bỏ trống</small>
+          </article>`;
+        }).join('')}</div>
+      </section>`
+    : '';
 
   appView.innerHTML = `
     <div class="quiz-topline">
-      <div class="quiz-heading"><p class="eyebrow">Kết quả · Chương ${activeChapter.number}</p><h1 class="view-title">${escapeHtml(activeChapter.title)}</h1></div>
+      <div class="quiz-heading"><p class="eyebrow">${data.isCombined ? 'Kết quả · Bài tổng hợp' : `Kết quả · Chương ${escapeHtml(activeChapter.number)}`}</p><h1 class="view-title">${escapeHtml(activeChapter.title)}</h1></div>
       <button class="button ghost" id="back-to-chapters" type="button"><span aria-hidden="true">←</span> Danh sách chương</button>
     </div>
 
@@ -751,6 +1007,8 @@ function renderResults() {
       <div><p class="eyebrow">Đã hoàn thành</p><h2>${score.unanswered ? 'Bài làm đã được chấm' : 'Hoàn thành tốt!'}</h2><p>${score.correct} đúng · ${score.wrong} sai · ${score.unanswered} chưa trả lời</p><p class="result-duration">Thời gian làm bài: <time>${elapsedTime}</time></p></div>
       <div class="score-block"><span class="score-number">${score.correct}/${data.questions.length}</span><span class="score-caption">${percent}% câu đúng</span></div>
     </section>
+
+    ${chapterBreakdown}
 
     <div class="result-actions">
       <label class="filter-label" for="review-filter">Xem câu
@@ -796,10 +1054,16 @@ function renderReviewCard(question, selectedIndex) {
   const stateClass = selected === null ? 'is-unanswered' : isCorrect ? 'is-correct' : 'is-wrong';
   const stateLabel = selected === null ? 'Chưa trả lời' : isCorrect ? 'Chính xác' : 'Chưa chính xác';
   const stateBadge = selected === null ? 'unanswered' : isCorrect ? 'correct' : 'wrong';
+  const chapterLabel = activeQuizData.isCombined && question.chapter
+    ? `<span class="review-chapter-label">CH ${escapeHtml(question.chapter.number)} · ${escapeHtml(question.chapter.title)}</span>`
+    : '';
+  const sectionLabel = question.section && (!activeQuizData.isCombined || question.section !== question.chapter?.title)
+    ? `<span class="topic"> · ${escapeHtml(question.section)}</span>`
+    : '';
 
   return `
     <article class="review-card ${stateClass}">
-      <div class="review-top"><strong>Câu ${question.number}${question.section ? `<span class="topic"> · ${escapeHtml(question.section)}</span>` : ''}</strong><span class="answer-status ${stateBadge}">${stateLabel}</span></div>
+      <div class="review-top"><strong>${chapterLabel}<span>Câu ${question.number}${sectionLabel}</span></strong><span class="answer-status ${stateBadge}">${stateLabel}</span></div>
       <p class="review-prompt">${renderRichText(question.prompt)}</p>
       <div class="review-options">
         ${question.options.map((option, index) => {
@@ -839,7 +1103,7 @@ function getIncorrectQuestions(questions, progress) {
 
 function startWrongQuestionRetry() {
   if (!activeProgress.submitted || activeProgress.retrySession) return;
-  const data = loadedChapters.get(activeChapter.id);
+  const data = activeQuizData;
   const incorrectQuestions = getIncorrectQuestions(data.questions, activeProgress);
   if (!incorrectQuestions.length) return;
 
@@ -856,7 +1120,7 @@ function startWrongQuestionRetry() {
 }
 
 function moveReviewPage(offset) {
-  const filtered = getReviewQuestions(loadedChapters.get(activeChapter.id).questions, activeProgress);
+  const filtered = getReviewQuestions(activeQuizData.questions, activeProgress);
   activeProgress.reviewPage = Math.max(0, Math.min(pageCount(filtered) - 1, activeProgress.reviewPage + offset));
   saveProgress();
   renderResults();
@@ -869,8 +1133,9 @@ function scrollToTop() {
 }
 
 function retakeQuiz() {
-  if (!window.confirm('Bắt đầu lại từ đầu? Câu trả lời và kết quả hiện tại của chương này sẽ được xóa.')) return;
-  const data = loadedChapters.get(activeChapter.id);
+  const subject = activeQuizData.isCombined ? 'bài tổng hợp' : 'chương này';
+  if (!window.confirm(`Bắt đầu lại từ đầu? Câu trả lời và kết quả hiện tại của ${subject} sẽ được xóa.`)) return;
+  const data = activeQuizData;
   clearProgress(activeChapter.id);
   activeProgress = makeProgress(data, activeProgress.mode);
   saveProgress();
