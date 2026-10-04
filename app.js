@@ -3,6 +3,7 @@ const REVIEW_PAGE_SIZE = 10;
 const LEGACY_QUIZ_PAGE_SIZE = 10;
 const QUIZ_LAYOUT_VERSION = 'single-question-v1';
 const STORAGE_KEY = 'qtm-quiz-progress-v3';
+const QUICK_PROGRESS_STORAGE_KEY = 'qtm-quick-quiz-progress-v1';
 const MODE_END_OF_CHAPTER = 'end-of-chapter';
 const MODE_AFTER_QUESTION = 'after-question';
 const CHAPTERS_MANIFEST = 'docs/chapters.json';
@@ -12,6 +13,7 @@ const appView = document.querySelector('#app-view');
 let chapters = [];
 let catalogError = null;
 const loadedChapters = new Map();
+const loadedQuickQuizzes = new Map();
 const chapterModes = new Map();
 let activeChapter = null;
 let activeQuizData = null;
@@ -202,8 +204,16 @@ function hashText(value) {
 }
 
 function readAllProgress() {
+  return readProgressStore(STORAGE_KEY);
+}
+
+function readAllQuickProgress() {
+  return readProgressStore(QUICK_PROGRESS_STORAGE_KEY);
+}
+
+function readProgressStore(storageKey) {
   try {
-    const value = localStorage.getItem(STORAGE_KEY);
+    const value = localStorage.getItem(storageKey);
     return value ? JSON.parse(value) : {};
   } catch {
     storageAvailable = false;
@@ -212,19 +222,24 @@ function readAllProgress() {
 }
 
 function readProgress(chapterData) {
-  const allProgress = readAllProgress();
-  const saved = allProgress[chapterData.chapter.id];
+  const allProgress = chapterData.isQuick ? readAllQuickProgress() : readAllProgress();
+  const progressKey = chapterData.isQuick ? `quick-${chapterData.sourceHash}` : chapterData.chapter.id;
+  const saved = allProgress[progressKey];
   if (!saved || saved.sourceHash !== chapterData.sourceHash) return null;
   if (!saved.answers || typeof saved.answers !== 'object') return null;
-  const questionIds = new Set(chapterData.questions.map((question) => question.id));
+  const questionById = new Map(chapterData.questions.map((question) => [question.id, question]));
+  const questionIds = new Set(questionById.keys());
+  const answers = Object.fromEntries(Object.entries(saved.answers).filter(([id, answer]) => {
+    const question = questionById.get(id);
+    return question && Number.isInteger(answer) && answer >= 0 && answer < question.options.length;
+  }));
   const completedQuestionIds = Array.isArray(saved.completedQuestionIds)
     ? [...new Set(saved.completedQuestionIds.filter((id) => questionIds.has(id)))]
     : [];
-  const questionById = new Map(chapterData.questions.map((question) => [question.id, question]));
   const retryQuestionIds = Array.isArray(saved.retrySession?.questionIds)
     ? [...new Set(saved.retrySession.questionIds.filter((id) => {
       const question = questionById.get(id);
-      const answer = saved.answers[id];
+      const answer = answers[id];
       return question && Number.isInteger(answer) && answer !== question.correctIndex;
     }))]
     : [];
@@ -248,7 +263,7 @@ function readProgress(chapterData) {
     }
     : null;
   return {
-    answers: saved.answers,
+    answers,
     mode: saved.mode === MODE_AFTER_QUESTION ? MODE_AFTER_QUESTION : MODE_END_OF_CHAPTER,
     completedQuestionIds,
     page: normalizeSavedQuizIndex(saved.page),
@@ -265,15 +280,27 @@ function readProgress(chapterData) {
 
 function saveProgress() {
   if (!activeChapter || !activeProgress) return;
-  writeProgress(activeChapter.id, activeProgress);
+  if (activeQuizData?.isQuick) {
+    writeQuickProgress(activeQuizData.sourceHash, activeProgress);
+  } else {
+    writeProgress(activeChapter.id, activeProgress);
+  }
 }
 
 function writeProgress(chapterId, progress) {
-  const allProgress = readAllProgress();
-  allProgress[chapterId] = progress;
+  writeProgressStore(STORAGE_KEY, chapterId, progress);
+}
+
+function writeQuickProgress(sourceHash, progress) {
+  writeProgressStore(QUICK_PROGRESS_STORAGE_KEY, `quick-${sourceHash}`, progress);
+}
+
+function writeProgressStore(storageKey, progressKey, progress) {
+  const allProgress = readProgressStore(storageKey);
+  allProgress[progressKey] = progress;
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(allProgress));
+    localStorage.setItem(storageKey, JSON.stringify(allProgress));
     storageAvailable = true;
   } catch {
     storageAvailable = false;
@@ -285,6 +312,17 @@ function clearProgress(chapterId) {
   delete allProgress[chapterId];
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(allProgress));
+    storageAvailable = true;
+  } catch {
+    storageAvailable = false;
+  }
+}
+
+function clearQuickProgress(sourceHash) {
+  const allProgress = readAllQuickProgress();
+  delete allProgress[`quick-${sourceHash}`];
+  try {
+    localStorage.setItem(QUICK_PROGRESS_STORAGE_KEY, JSON.stringify(allProgress));
     storageAvailable = true;
   } catch {
     storageAvailable = false;
@@ -360,6 +398,7 @@ function renderHome() {
         <span class="export-status" data-export-status role="status" aria-live="polite"></span>
       </div>
     </section>
+    ${renderQuickQuizCard()}
     ${renderAllChaptersCard(allChaptersData, errors)}
     <section class="chapter-grid" aria-label="Danh sách chương">
       ${chapters.map((chapter) => renderChapterCard(chapter, loadedChapters.get(chapter.id))).join('')}
@@ -371,6 +410,7 @@ function renderHome() {
   appView.querySelectorAll('[data-start-chapter]').forEach((button) => {
     button.addEventListener('click', () => startChapter(button.dataset.startChapter));
   });
+  appView.querySelector('#quick-quiz-file')?.addEventListener('change', handleQuickQuizFileSelection);
   appView.querySelector('[data-export-results]')?.addEventListener('click', exportResultsMarkdown);
   appView.querySelector('[data-start-all-chapters]')?.addEventListener('click', startAllChapters);
   appView.querySelectorAll('[data-mode-chapter]').forEach((input) => {
@@ -380,6 +420,55 @@ function renderHome() {
     input.addEventListener('change', () => updateAllChaptersMode(input.value));
   });
   focusViewHeading();
+}
+
+function renderQuickQuizCard() {
+  return `
+    <section class="quick-quiz-card" aria-labelledby="quick-quiz-title">
+      <div>
+        <p class="eyebrow">Làm bài nhanh</p>
+        <h2 id="quick-quiz-title">Tạo bài kiểm tra từ Markdown</h2>
+        <p>Chọn file .md hoặc .markdown có tiêu đề “Câu N”, bốn đáp án A–D và một đáp án đúng in đậm. File được đọc ngay trên trình duyệt.</p>
+      </div>
+      <label class="button secondary quick-file-label" for="quick-quiz-file">
+        <span>Chọn file Markdown</span>
+        <input id="quick-quiz-file" class="quick-file-input" type="file" accept=".md,.markdown,text/markdown" aria-label="Chọn file Markdown để tạo bài tập nhanh" />
+      </label>
+      <p class="quick-file-status" data-quick-file-status role="status" aria-live="polite"></p>
+    </section>
+  `;
+}
+
+async function handleQuickQuizFileSelection(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  const status = appView.querySelector('[data-quick-file-status]');
+  if (!file) return;
+
+  if (!/\.(md|markdown)$/i.test(file.name)) {
+    if (status) status.textContent = 'Hãy chọn file có phần mở rộng .md hoặc .markdown.';
+    input.value = '';
+    return;
+  }
+
+  if (status) status.textContent = `Đang đọc ${file.name}…`;
+  try {
+    const source = await file.text();
+    const sourceHash = hashText(source);
+    const chapter = { id: 'quick-exercise', number: '', title: file.name, file: file.name };
+    const questions = parseQuestions(source, chapter);
+    if (!questions.length) {
+      throw new Error('Không tìm thấy câu hỏi theo định dạng tiêu đề “Câu N”.');
+    }
+
+    const data = { chapter, questions, sourceHash, fileName: file.name, isQuick: true };
+    loadedQuickQuizzes.set(sourceHash, data);
+    input.value = '';
+    startQuiz(data);
+  } catch (error) {
+    if (status) status.textContent = `Không thể tạo bài kiểm tra: ${error.message}`;
+    input.value = '';
+  }
 }
 
 function collectSubmittedResults() {
@@ -393,6 +482,11 @@ function collectSubmittedResults() {
   for (const chapter of chapters) {
     const data = loadedChapters.get(chapter.id);
     if (!data || data.error) continue;
+    const progress = readProgress(data);
+    if (progress?.submitted) results.push(makeExportResult(data, progress));
+  }
+
+  for (const data of loadedQuickQuizzes.values()) {
     const progress = readProgress(data);
     if (progress?.submitted) results.push(makeExportResult(data, progress));
   }
@@ -455,7 +549,9 @@ function renderExportResult({ data, progress, score }) {
   const percent = Math.round((score.correct / data.questions.length) * 100);
   const title = data.isCombined
     ? 'Bài tổng hợp tất cả chương'
-    : `Chương ${data.chapter.number} · ${data.chapter.title}`;
+    : data.isQuick
+      ? `Bài tập nhanh · ${data.fileName}`
+      : `Chương ${data.chapter.number} · ${data.chapter.title}`;
   const lines = [
     `## ${escapeMarkdownHeading(title)}`,
     '',
@@ -463,14 +559,15 @@ function renderExportResult({ data, progress, score }) {
     `- Kết quả: ${score.wrong} câu sai · ${score.unanswered} câu bỏ trống`,
     `- Thời gian làm bài: ${formatElapsedTime(getElapsedTimeMs(progress))}`,
     '',
-    '### Điểm theo chương',
-    '',
   ];
 
-  const chapterData = data.isCombined ? data.chapters : [data];
-  for (const item of chapterData) {
-    const chapterScore = calculateScore(progress, item.questions);
-    lines.push(`- **CH ${escapeMarkdownHeading(item.chapter.number)} · ${escapeMarkdownHeading(item.chapter.title)}:** ${chapterScore.correct}/${item.questions.length} đúng, ${chapterScore.wrong} sai, ${chapterScore.unanswered} bỏ trống`);
+  if (!data.isQuick) {
+    lines.push('### Điểm theo chương', '');
+    const chapterData = data.isCombined ? data.chapters : [data];
+    for (const item of chapterData) {
+      const chapterScore = calculateScore(progress, item.questions);
+      lines.push(`- **CH ${escapeMarkdownHeading(item.chapter.number)} · ${escapeMarkdownHeading(item.chapter.title)}:** ${chapterScore.correct}/${item.questions.length} đúng, ${chapterScore.wrong} sai, ${chapterScore.unanswered} bỏ trống`);
+    }
   }
 
   lines.push('', '### Chi tiết từng câu', '');
@@ -732,7 +829,9 @@ function renderQuiz() {
     ? 'Làm lại câu sai'
     : activeQuizData.isCombined
       ? 'Bài tổng hợp'
-      : `Chương ${escapeHtml(activeChapter.number)}`;
+      : activeQuizData.isQuick
+        ? 'Bài tập nhanh'
+        : `Chương ${escapeHtml(activeChapter.number)}`;
   const progressLabel = isRetry ? 'câu trong lượt làm lại đã trả lời' : 'câu đã trả lời';
   const questionPosition = isRetry
     ? `Câu ${session.page + 1} / ${questions.length} trong lượt làm lại`
@@ -1096,7 +1195,7 @@ function renderResults() {
 
   appView.innerHTML = `
     <div class="quiz-topline">
-      <div class="quiz-heading"><p class="eyebrow">${data.isCombined ? 'Kết quả · Bài tổng hợp' : `Kết quả · Chương ${escapeHtml(activeChapter.number)}`}</p><h1 class="view-title">${escapeHtml(activeChapter.title)}</h1></div>
+      <div class="quiz-heading"><p class="eyebrow">${data.isCombined ? 'Kết quả · Bài tổng hợp' : data.isQuick ? 'Kết quả · Bài tập nhanh' : `Kết quả · Chương ${escapeHtml(activeChapter.number)}`}</p><h1 class="view-title">${escapeHtml(activeChapter.title)}</h1></div>
       <button class="button ghost" id="back-to-chapters" type="button"><span aria-hidden="true">←</span> Danh sách chương</button>
     </div>
 
@@ -1230,10 +1329,13 @@ function scrollToTop() {
 }
 
 function retakeQuiz() {
-  const subject = activeQuizData.isCombined ? 'bài tổng hợp' : 'chương này';
+  const subject = activeQuizData.isCombined
+    ? 'bài tổng hợp'
+    : activeQuizData.isQuick ? 'bài tập nhanh này' : 'chương này';
   if (!window.confirm(`Bắt đầu lại từ đầu? Câu trả lời và kết quả hiện tại của ${subject} sẽ được xóa.`)) return;
   const data = activeQuizData;
-  clearProgress(activeChapter.id);
+  if (data.isQuick) clearQuickProgress(data.sourceHash);
+  else clearProgress(activeChapter.id);
   activeProgress = makeProgress(data, activeProgress.mode);
   saveProgress();
   renderQuiz();
